@@ -35,4 +35,5 @@ Then that div will morph into a full-screen overlay with the contents of __morph
 
 # Maintainers
 Mark Christian D. Lopez
+
 <xmarkclx@gmail.com>
