@@ -10,7 +10,6 @@
  */
 
 ;( function( window ) {
-
     'use strict';
 
     var transEndEventNames = {
@@ -23,6 +22,15 @@
         transEndEventName = transEndEventNames[ Modernizr.prefixed( 'transition' ) ],
         support = { transitions : Modernizr.csstransitions };
 
+    function cloneElement(el, newId){
+        return $(el).clone().prop({ id: newId });
+    }
+
+    function cloneElementToNewParent(el, newParent, newId){
+        var clone = $(el).clone().prop({ id: newId });
+        $(newParent).append(clone);
+    }
+
     function extend( a, b ) {
         for( var key in b ) {
             if( b.hasOwnProperty( key ) ) {
@@ -33,7 +41,9 @@
     }
 
     function UIMorphingButton( el, options ) {
+        console.log(el);
         this.el = el;
+        $(el).data('isMorphing', '1');
         this.options = extend( {}, this.options );
         extend( this.options, options );
         this._init();
@@ -61,12 +71,20 @@
     UIMorphingButton.prototype._initEvents = function() {
         var self = this;
         // open
-        this.button.addEventListener( 'click', function() { self.toggle(); } );
+        if($(this.el).hasClass('morphing-cloned')){
+            this.button.addEventListener( 'click', function() { self.toggleCloned(); } );
+        }else{
+            this.button.addEventListener( 'click', function() { self.toggle(); } );
+        }
         // close
         if( this.options.closeEl !== '' ) {
             var closeEl = this.el.querySelector( this.options.closeEl );
             if( closeEl ) {
-                closeEl.addEventListener( 'click', function() { self.toggle(); } );
+                if($(this.el).hasClass('morphing-cloned')){
+                    closeEl.addEventListener( 'click', function() { self.toggleCloned(); } );
+                }else{
+                    closeEl.addEventListener( 'click', function() { self.toggle(); } );
+                }
             }
         }
     };
@@ -125,7 +143,8 @@
         // set the left and top values of the contentEl (same like the button)
         var buttonPos = this.button.getBoundingClientRect();
         // need to reset
-        classie.addClass( this.contentEl, 'no-transition' );
+        classie.addClass(this.contentEl, 'no-transition');
+
         this.contentEl.style.left = 'auto';
         this.contentEl.style.top = 'auto';
 
@@ -133,7 +152,9 @@
         setTimeout( function() {
             self.contentEl.style.left = buttonPos.left + 'px';
             self.contentEl.style.top = buttonPos.top + 'px';
-            //self.contentEl.style.height = self.button.height + 'px';
+
+            // self.contentEl.style.height = buttonPos.height + 'px';
+            // self.contentEl.style.width = buttonPos.width + 'px';
 
             if( self.expanded ) {
                 classie.removeClass( self.contentEl, 'no-transition' );
@@ -148,6 +169,123 @@
         }, 25 );
     };
 
+
+    UIMorphingButton.prototype.toggleCloned = function() {
+        if( this.isAnimating ) return false;
+
+        // callback
+        if (this.expanded) {
+            this.options.onBeforeClose();
+        }
+        else {
+            // Generate the clone to avoid the problems with stacking contexts.
+            $('#active-morph-button').remove();
+            var clone = cloneElement(this.el, 'active-morph-button');
+            clone.css('opacity', 0);
+            clone.css('z-index', 999999);
+            var el = $(this.el);
+            var originalPositionTop = el.offset().top - $(window).scrollTop();
+            var originalPositionLeft = el.find('button').offset().left  - $(window).scrollLeft();
+            var originalWidth = el.find('button').outerWidth();
+            var originalHeight = el.find('button').outerHeight();
+            clone.css('top', originalPositionTop);
+            clone.css('left', originalPositionLeft);
+            clone.css('width', originalWidth);
+            clone.css('height', originalHeight);
+            clone.find('button').css('width', originalWidth);
+            clone.find('button').css('height', originalHeight);
+            clone.css('position', 'fixed');
+            $('body').append(clone);
+            clone.find('.morph-content').remove();
+            clone.append(this.contentEl);
+            var cloneContentEl = clone.find('.morph-content');
+            cloneContentEl.css('top', originalPositionTop);
+            cloneContentEl.css('left', originalPositionLeft);
+            cloneContentEl.css('width', originalWidth);
+            cloneContentEl.css('height', originalHeight);
+            cloneContentEl.css('padding', 0);
+            clone.find('button').css('color', 'transparent!important');
+            clone.css('opacity', 1);
+            this.clone = $(clone)[0];
+            this.cloneContentEl = $(cloneContentEl)[0];
+
+            // add class active (solves z-index problem when more than one button is in the page)
+            classie.addClass( this.clone, 'active' );
+            //$(this.contentEl).width($(this.button).width());
+            //$(this.contentEl).height($(this.button).height());
+            this.options.onBeforeOpen();
+        }
+
+        this.isAnimating = true;
+
+        var self = this,
+            onEndTransitionFn = function( ev ) {
+                if( ev.target !== this ) return false;
+
+                if( support.transitions ) {
+                    // open: first opacity then width/height/left/top
+                    // close: first width/height/left/top then opacity
+                    if( self.expanded && ev.propertyName !== 'opacity' || !self.expanded && ev.propertyName !== 'width' && ev.propertyName !== 'height' && ev.propertyName !== 'left' && ev.propertyName !== 'top' ) {
+                        return false;
+                    }
+                    this.removeEventListener( transEndEventName, onEndTransitionFn );
+                }
+                self.isAnimating = false;
+
+                // callback
+                if( self.expanded ) {
+                    // remove class active (after closing)
+                    classie.removeClass( self.clone, 'active' );
+                    // remove clone
+                    $(self.clone).hide();
+                    self.options.onAfterClose();
+                }
+                else {
+                    self.options.onAfterOpen();
+                }
+
+                self.expanded = !self.expanded;
+            };
+
+        $(cloneContentEl).find(this.options.closeEl).click(function() { console.log(self); self.toggleCloned(); } );
+
+        if( support.transitions ) {
+            console.log(this.cloneContentEl);
+            this.cloneContentEl.addEventListener( transEndEventName, onEndTransitionFn );
+        }
+        else {
+            onEndTransitionFn();
+        }
+
+        // set the left and top values of the contentEl (same like the button)
+        var buttonPos = this.button.getBoundingClientRect();
+        // need to reset
+        classie.addClass(this.cloneContentEl, 'no-transition');
+
+        this.contentEl.style.left = 'auto';
+        this.contentEl.style.top = 'auto';
+
+        // add/remove class "open" to the button wraper
+        setTimeout( function() {
+            self.contentEl.style.left = buttonPos.left + 'px';
+            self.contentEl.style.top = buttonPos.top + 'px';
+
+            // self.contentEl.style.height = buttonPos.height + 'px';
+            // self.contentEl.style.width = buttonPos.width + 'px';
+
+            if( self.expanded ) {
+                classie.removeClass( self.cloneContentEl, 'no-transition' );
+                classie.removeClass( self.clone, 'open' );
+            }
+            else {
+                setTimeout( function() {
+                    classie.removeClass( self.cloneContentEl, 'no-transition' );
+                    classie.addClass( self.clone, 'open' );
+                }, 25 );
+            }
+        }, 25 );
+    };
+
     // add to global namespace
     window.UIMorphingButton = UIMorphingButton;
 
@@ -157,9 +295,7 @@
  * START
  **/
 
-(function() {
-    var docElem = window.document.documentElement, didScroll, scrollPosition;
-
+(function () {
     // trick to prevent scrolling when opening/closing button
     function noScrollFn() {
         window.scrollTo( scrollPosition ? scrollPosition.x : 0, scrollPosition ? scrollPosition.y : 0 );
@@ -191,10 +327,59 @@
         didScroll = false;
     }
 
-    scrollFn();
+    function handleStaticSize(){
+        $('.morph-content').each(function() {
+            $(this).css('width', $(this).parent().find('button').outerWidth());
+            $(this).css('height', $(this).parent().find('button').outerHeight());
+        });
+    }
 
-    $('.morph-button').each(function(){
-        new UIMorphingButton($(this)[0], {
+    function readyMorphButtons(){
+        $('.morph-button, .morph-content').hide();
+
+        scrollFn();
+
+        $('.morph-button').each(function(){
+            new UIMorphingButton($(this)[0], {
+                closeEl: '.icon-close',
+                onBeforeOpen: function () {
+                    // don't allow to scroll
+                    noScroll();
+                },
+                onAfterOpen: function () {
+                    // can scroll again
+                    canScroll();
+                },
+                onBeforeClose: function () {
+                    // don't allow to scroll
+                    noScroll();
+                },
+                onAfterClose: function () {
+                    // can scroll again
+                    canScroll();
+                }
+            });
+        });
+
+        handleStaticSize();
+
+        $(window).resize(function(){
+            handleStaticSize();
+        });
+
+        $(document).ready(function(){
+            handleStaticSize();
+            setTimeout(function(){
+                handleStaticSize();
+            }, 300)
+        });
+
+        $('.morph-button, .morph-content').show();
+    }
+
+
+    function makeMorphButton(el){
+        new UIMorphingButton(el, {
             closeEl: '.icon-close',
             onBeforeOpen: function () {
                 // don't allow to scroll
@@ -213,27 +398,61 @@
                 canScroll();
             }
         });
-    });
+    }
 
-    //document.getElementById( 'terms' ).addEventListener( 'change', function() {
-    //    UIBtnn.toggle();
-    //} );
+    var docElem = window.document.documentElement, didScroll, scrollPosition;
+
+    readyMorphButtons();
+    window.readyMorphButtons = readyMorphButtons;
+    window.makeMorphButton = makeMorphButton;
+})();
+
+function readyMorphButtons() {
+    $('.morph-button, .morph-content').hide();
+
+    scrollFn();
+
+    $('.morph-button').each(function () {
+        new UIMorphingButton($(this)[0], {
+            closeEl: '.icon-close',
+            onBeforeOpen: function () {
+                // don't allow to scroll
+                noScroll();
+            },
+            onAfterOpen: function () {
+                // can scroll again
+                //console.log(typeof(window.morphAfterOpen));
+                //if(typeof(window.morphAfterOpen) != 'undefined')
+                //    window.morphAfterOpen();
+                canScroll();
+            },
+            onBeforeClose: function () {
+                // don't allow to scroll
+                noScroll();
+            },
+            onAfterClose: function () {
+                // can scroll again
+                canScroll();
+            }
+        });
+    });
 
     handleStaticSize();
 
-
-    function handleStaticSize(){
-        $('.morph-content.morph-form-static-size').each(function() {
-            $(this).css('width', $(this).parent().find('button').outerWidth());
-            $(this).css('height', $(this).parent().find('button').outerHeight());
-        });
-    }
-
-    $(window).resize(function(){
+    $(window).resize(function () {
         handleStaticSize();
     });
 
-    $(document).ready(function(){
+    $(document).ready(function () {
         handleStaticSize();
+        setTimeout(function () {
+            handleStaticSize();
+        }, 300)
     });
-})();
+
+    $('.morph-button, .morph-content').show();
+}
+
+function makeMorphButton(){
+
+}
